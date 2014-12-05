@@ -11,7 +11,7 @@
 typedef unsigned char Cell;
 
 typedef enum {
-    CELL_ALIVE = 1,
+    CELL_ALIVE = 255,
     CELL_DEAD = 0
 } CellState;
 #endif /* GAMEOFLIFE_H_ */
