@@ -17,8 +17,11 @@ out port cled1 = PORT_CLOCKLED_1;
 out port cled2 = PORT_CLOCKLED_2;
 out port cled3 = PORT_CLOCKLED_3;
 
+void terminate(chanend channel, unsigned int signal, char* name);
+
 void read_image_to_board(chanend input, CellState board[][IMAGE_WIDTH]) {
     uchar val;
+
     printf( "ProcessImage:Start, size = %dx%d\n", IMAGE_HEIGHT, IMAGE_WIDTH );
     for( int y = 0; y < IMAGE_HEIGHT; y++ )
     {
@@ -39,7 +42,8 @@ void write_board_to_image(chanend output, CellState board[][IMAGE_WIDTH]) {
     {
         for( int x = 0; x < IMAGE_WIDTH; x++ )
         {
-            output <: (uchar)(board[y][x] ^ 0xFF) ;
+            uchar val = board[y][x] ^ 0xFF;
+            output <: val;
 #ifdef DEBUG
             printf("Value of output board at position (%d, %d) = %d\n", x, y, val);
 #endif
@@ -49,54 +53,91 @@ void write_board_to_image(chanend output, CellState board[][IMAGE_WIDTH]) {
 
 DistributorState getNewStateFromButtons(DistributorState previousState, chanend buttonListener) {
     ButtonListenerDistributorEvent event;
-    buttonListener :> event;
+
+    select {
+        case buttonListener :> event:
+            break;
+        default:
+            event = -1;
+            break;
+    }
     switch(event) {
     case BLD_START:
-        break;
+        return DIST_INITIALISING;
     case BLD_PLAY_PAUSE:
-        if (previousState == DIST_PAUSING) return DIST_RUNNING;
-        else return DIST_PAUSING;
+        if (previousState == DIST_PAUSED) { return DIST_RUNNING; }
+        return DIST_PAUSED;
     case BLD_SAVE:
-        if (previousState == DIST_RUNNING) return DIST_EXPORTING;
-        else return previousState;
+        if (previousState == DIST_RUNNING || previousState == DIST_PAUSED) { return DIST_EXPORTING; }
+        return previousState;
     case BLD_STOP:
         return DIST_TERMINATING;
     default:
-        printf("getNewStateFromButtons got a weird event, wtf\n");
+#ifdef DEBUG
+        printf("No new state\n");
+#endif
         return previousState;
+    }
+}
+
+void copyBoard(CellState src[IMAGE_HEIGHT][IMAGE_WIDTH], CellState dest[IMAGE_HEIGHT][IMAGE_WIDTH]) {
+    for (int y = 0; y < IMAGE_HEIGHT; y++) {
+        for (int x = 0; x < IMAGE_HEIGHT; x++) {
+            dest[y][x] = src[y][x];
+        }
     }
 }
 
 void distributor(chanend c_in, chanend c_out, chanend buttonListener, chanend visualiser, chanend dataIn, chanend dataOut)
 {
-    DistributorState state = UNSTARTED;
+    DistributorState state = DIST_UNSTARTED;
+    DistributorState previousState = state;
     CellState board[IMAGE_HEIGHT][IMAGE_WIDTH];
     CellState nextBoard[IMAGE_HEIGHT][IMAGE_WIDTH];
-    while (state != TERMINATING) {
+    unsigned int iterationNumber = 0;
+
+    printf("Distributor:Start\n");
+    while (state != DIST_TERMINATING) {
         switch(state) {
         case DIST_UNSTARTED:
+            previousState = state;
             state = getNewStateFromButtons(state, buttonListener);
-            visualiser <: VD_START;
             break;
 
         case DIST_INITIALISING:
+            previousState = state;
+            dataIn <: D_IN_D_READ;
+            visualiser <: VD_START;
             visualiser <: IMAGE_HEIGHT * IMAGE_HEIGHT;
-            visualiser <: 0;
             read_image_to_board(c_in, board);
-            state = getNewStateFromButtons(buttonListener);
+            state = DIST_RUNNING;
             break;
 
         case DIST_RUNNING:
+            previousState = state;
             unsigned int totalNumberOfAliveCells = calculateNewBoard(board, nextBoard, IMAGE_HEIGHT, IMAGE_WIDTH);
+            copyBoard(nextBoard, board);
+            visualiser <: VD_RUN;
             visualiser <: totalNumberOfAliveCells;
-            state = getNewStateFromButtons(buttonListener);
+            printf("iteration number: %d\n", iterationNumber++);
+            state = getNewStateFromButtons(state, buttonListener);
             break;
 
-        case DIST_PAUSING:
+        case DIST_PAUSED:
+            if (previousState != DIST_PAUSED) { visualiser <: VD_PAUSE; }
+            state = getNewStateFromButtons(state, buttonListener);
+            if (state != DIST_PAUSED) { visualiser <: VD_RUN; }
             break;
 
         case DIST_EXPORTING:
+            visualiser <: VD_EXPORT;
+            dataOut <: D_OUT_D_EXPORT;
+            DataOutDistributorEvent response;
             write_board_to_image(c_out, nextBoard);
+            dataOut :> response;
+            visualiser <: VD_EXPORTED;
+            if (response != D_OUT_D_EXPORT) printf("Data Out did not return correct response after exporting\n");
+            state = previousState;
             break;
 
         default:
@@ -104,15 +145,21 @@ void distributor(chanend c_in, chanend c_out, chanend buttonListener, chanend vi
         }
     }
     // We're now TERMINATING, synchronise with all processes
-    visualiser <: state;
-    buttonListener <: state;
-    dataIn <: state;
-    dataOut <: state;
+    printf("Time to terminate!\n");
+    terminate(visualiser, VD_TERMINATING, "visualiser");
+    terminate(dataIn, D_IN_D_TERMINATING, "dataIn");
+    terminate(dataOut, D_OUT_D_TERMINATING, "dataOut");
+    terminate(buttonListener, BLD_TERMINATING, "buttonListener");
+}
+
+void terminate(chanend channel, unsigned int signal, char* name) {
     int terminated = 0;
-    visualiser :> terminated;
-    if (terminated != TERMINATED) { printf("Error: Visualiser did not terminate.\n"); }
-    buttonListener :> terminated;
-    if (terminated != TERMINATED) { printf("Error: buttonListener did not terminate.\n"); }
+    channel <: signal;
+    channel :> terminated;
+    if (terminated != TERMINATED) { printf("Error: %s did not terminate.\n", name); }
+#ifdef DEBUG
+    else printf("%s has terminated\n", name);
+#endif
 }
 
 
@@ -126,6 +173,7 @@ int main()
     chan dataInToDistributor;
     chan dataOutToDistributor;
     chan quadrants[NUMBER_OF_QUADRANTS];
+
     par {
         on stdcore[0]: distributor(c_inIO, c_outIO, buttonListenerToDistributor, visualiserToDistributor,
                 dataInToDistributor, dataOutToDistributor);

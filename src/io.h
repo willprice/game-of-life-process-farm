@@ -7,7 +7,7 @@ typedef enum {
     D = 0b0111
 } ButtonPattern;
 
-led_pattern calculate_led_pattern(int ledNumber, int quadrantIndex);
+led_pattern calculate_led_pattern(int ledNumber);
 void visualiser(chanend, chanend []);
 int showLED(out port p, chanend visualiser);
 
