@@ -126,7 +126,15 @@ void distributor(chanend c_in, chanend c_out, chanend buttonListener, chanend vi
         case DIST_PAUSED:
             if (previousState != DIST_PAUSED) { visualiser <: VD_PAUSE; }
             state = getNewStateFromButtons(state, buttonListener);
-            if (state != DIST_PAUSED) { visualiser <: VD_RUN; }
+            if (state != DIST_PAUSED) {
+                switch(state) {
+                case DIST_RUNNING:
+                    visualiser <: VD_RUN;
+                    break;
+                case DIST_TERMINATING:
+                    break;
+                }
+            }
             break;
 
         case DIST_EXPORTING:

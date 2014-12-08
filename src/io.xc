@@ -112,7 +112,6 @@ void visualiser(chanend distributor, chanend quadrants[]) {
         switch(state) {
         case VIS_UNSTARTED:
             break;
-
         case VIS_INITIALISING:
             distributor :> sizeOfBoard;
             state = VIS_RUNNING;
@@ -136,15 +135,21 @@ void visualiser(chanend distributor, chanend quadrants[]) {
 
         case VIS_PAUSED:
             break;
+
+        case VIS_TERMINATING:
+            for (int quadrantIndex = 0; quadrantIndex < NUMBER_OF_QUADRANTS; quadrantIndex++) {
+                int terminated = 0;
+                quadrants[quadrantIndex] <: V_LED_TERMINATE;
+                quadrants[quadrantIndex] :> terminated;
+                if (terminated != TERMINATED) { printf("Error: ShowLED on quadrant %d didn't terminate.\n", quadrantIndex); }
+            }
+            distributor <: TERMINATED;
+            break;
+
+        default:
+            break;
         }
     }
-    for (int quadrantIndex = 0; quadrantIndex < NUMBER_OF_QUADRANTS; quadrantIndex++) {
-        int terminated = 0;
-        quadrants[quadrantIndex] <: V_LED_TERMINATE;
-        quadrants[quadrantIndex] :> terminated;
-        if (terminated != TERMINATED) { printf("Error: ShowLED on quadrant %d didn't terminate.\n", quadrantIndex); }
-    }
-    distributor <: TERMINATED;
 }
 
 /** Read Image from pgm file with path and name infname[] to channel c_out */
