@@ -12,9 +12,13 @@
 #include "imageProperties.h"
 
 #define NUMBER_OF_QUADRANTS 4
+#define DEBUG
 
 out port cledR = PORT_CLOCKLED_SELR;
 in port  buttons = PORT_BUTTON;
+
+void writePatternToLEDS(led_pattern patterns[4], chanend quadrants[4]);
+
 
 void waitMoment() {
     timer tmr;
@@ -45,7 +49,7 @@ int showLED(out port p, chanend visualiser) {
     return 0;
 }
 
-void calculate_led_patterns(led_pattern patterns[4], int numberOfLeds) {
+void calculate_led_patterns(led_pattern patterns[4], unsigned int numberOfLeds) {
     for (int quadrantIndex = 0; quadrantIndex < 4; quadrantIndex++) {
         if (numberOfLeds >= 3) {
             // turn all LEDs on in quadrant
@@ -103,6 +107,8 @@ void visualiser(chanend distributor, chanend quadrants[]) {
     VisualiserState previousState = state;
     unsigned int sizeOfBoard = 0;
     unsigned int numberOfAliveCells = 0;
+    unsigned int completeness = 0; // percentageDone * 12
+    led_pattern patterns[4];
 
     useRedLEDs();
 
@@ -118,22 +124,21 @@ void visualiser(chanend distributor, chanend quadrants[]) {
             break;
 
         case VIS_RUNNING:
-            led_pattern patterns[4];
             distributor :> numberOfAliveCells;
 #ifdef DEBUG
             printf("numberOfAliveCells: %d\n", numberOfAliveCells);
 #endif
             calculate_led_patterns(patterns, numberOfAliveCells);
-            for (int quadrantIndex = 0; quadrantIndex < NUMBER_OF_QUADRANTS; quadrantIndex++) {
-                quadrants[quadrantIndex] <: V_LED_RUN;
-                quadrants[quadrantIndex] <: patterns[quadrantIndex];
-            }
+            writePatternToLEDS(patterns, quadrants);
             break;
 
         case VIS_EXPORTING:
             break;
 
         case VIS_PAUSED:
+            distributor :> completeness;
+            calculate_led_patterns(patterns, completeness);
+            writePatternToLEDS(patterns, quadrants);
             break;
 
         case VIS_TERMINATING:
@@ -149,6 +154,13 @@ void visualiser(chanend distributor, chanend quadrants[]) {
         default:
             break;
         }
+    }
+}
+
+void writePatternToLEDS(led_pattern patterns[4], chanend quadrants[4]) {
+    for (int quadrantIndex = 0; quadrantIndex < NUMBER_OF_QUADRANTS; quadrantIndex++) {
+        quadrants[quadrantIndex] <: V_LED_RUN;
+        quadrants[quadrantIndex] <: patterns[quadrantIndex];
     }
 }
 

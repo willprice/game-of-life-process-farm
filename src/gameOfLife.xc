@@ -10,7 +10,9 @@
 #include "debug.h"
 
 //#define DEBUG
+#define LOW_DEBUG
 #define NUMBER_OF_QUADRANTS 4
+#define NUMBER_OF_ITERATIONS 100
 
 out port cled0 = PORT_CLOCKLED_0;
 out port cled1 = PORT_CLOCKLED_1;
@@ -88,7 +90,7 @@ void copyBoard(CellState src[IMAGE_HEIGHT][IMAGE_WIDTH], CellState dest[IMAGE_HE
     }
 }
 
-void distributor(chanend c_in, chanend c_out, chanend buttonListener, chanend visualiser, chanend dataIn, chanend dataOut)
+void distributor(chanend c_in, chanend c_out, chanend workers[4], chanend buttonListener, chanend visualiser, chanend dataIn, chanend dataOut)
 {
     DistributorState state = DIST_UNSTARTED;
     DistributorState previousState = state;
@@ -108,7 +110,7 @@ void distributor(chanend c_in, chanend c_out, chanend buttonListener, chanend vi
             previousState = state;
             dataIn <: D_IN_D_READ;
             visualiser <: VD_START;
-            visualiser <: IMAGE_HEIGHT * IMAGE_HEIGHT;
+            visualiser <: IMAGE_HEIGHT * IMAGE_WIDTH;
             read_image_to_board(c_in, board);
             state = DIST_RUNNING;
             break;
@@ -118,14 +120,21 @@ void distributor(chanend c_in, chanend c_out, chanend buttonListener, chanend vi
             unsigned int totalNumberOfAliveCells = calculateNewBoard(board, nextBoard, IMAGE_HEIGHT, IMAGE_WIDTH);
             copyBoard(nextBoard, board);
             visualiser <: VD_RUN;
-            visualiser <: totalNumberOfAliveCells;
-            printf("iteration number: %d\n", iterationNumber++);
+            // No more than half the cells in the grid can be alive, so we use this as our upper limit.
+            unsigned int numberOfLitLEDs = totalNumberOfAliveCells / (IMAGE_HEIGHT * IMAGE_WIDTH / 2.0);
+            visualiser <: numberOfLitLEDs;
+#ifdef LOW_DEBUG
+            printf("iteration number: %d, %d\n", iterationNumber++);
+#endif
             state = getNewStateFromButtons(state, buttonListener);
+            if (iterationNumber > NUMBER_OF_ITERATIONS) { state = DIST_TERMINATING; }
             break;
 
         case DIST_PAUSED:
             if (previousState != DIST_PAUSED) { visualiser <: VD_PAUSE; }
             state = getNewStateFromButtons(state, buttonListener);
+            unsigned int complete = (iterationNumber * 12)/ NUMBER_OF_ITERATIONS;
+            visualiser <: complete;
             if (state != DIST_PAUSED) {
                 switch(state) {
                 case DIST_RUNNING:
@@ -170,7 +179,9 @@ void terminate(chanend channel, unsigned int signal, char* name) {
 #endif
 }
 
-
+void worker(chanend distributor) {
+    while(1) { ; }
+}
 
 //MAIN PROCESS defining channels, orchestrating and starting the threads
 int main()
@@ -181,9 +192,10 @@ int main()
     chan dataInToDistributor;
     chan dataOutToDistributor;
     chan quadrants[NUMBER_OF_QUADRANTS];
+    chan workers[4];
 
     par {
-        on stdcore[0]: distributor(c_inIO, c_outIO, buttonListenerToDistributor, visualiserToDistributor,
+        on stdcore[0]: distributor(c_inIO, c_outIO, workers, buttonListenerToDistributor, visualiserToDistributor,
                 dataInToDistributor, dataOutToDistributor);
         on stdcore[0]: visualiser(visualiserToDistributor, quadrants);
         on stdcore[0]: buttonListener(buttonListenerToDistributor);
@@ -195,6 +207,11 @@ int main()
         on stdcore[1]: showLED(cled1, quadrants[1]);
         on stdcore[2]: showLED(cled2, quadrants[2]);
         on stdcore[3]: showLED(cled3, quadrants[3]);
+
+        on stdcore[0]: worker(workers[0]);
+        on stdcore[1]: worker(workers[1]);
+        on stdcore[2]: worker(workers[2]);
+        on stdcore[3]: worker(workers[3]);
     }
     return 0;
 }
